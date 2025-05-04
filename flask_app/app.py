@@ -85,6 +85,53 @@ def run_liteisp_on_raw(model, raw_png_path=None, raw_array=None, device='cpu'):
     out_np = out_t[0].permute(1,2,0).cpu().numpy()
     return np.clip(out_np,0,1), raw_norm
 
+def color_to_rggb(img, format='RGB'):
+    """
+    Convert a demosaicked color image back to RGGB Bayer pattern.
+    Works with either RGB or BGR input format.
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        Color image with shape [height, width, 3]
+    format : str
+        Input image format, either 'RGB' or 'BGR' (default: 'RGB')
+        
+    Returns:
+    --------
+    numpy.ndarray
+        RGGB Bayer pattern image with shape [height, width]
+    """
+    if img.ndim != 3 or img.shape[2] != 3:
+        raise ValueError("Input must be a color image with shape [height, width, 3]")
+    
+    if format.upper() not in ['RGB', 'BGR']:
+        raise ValueError("Format must be either 'RGB' or 'BGR'")
+    
+    height, width, _ = img.shape
+    bayer = np.zeros((height, width), dtype=img.dtype)
+    
+    if format.upper() == 'RGB':
+        # R channel is at index 0
+        r_idx, g_idx, b_idx = 0, 1, 2
+    else:  # BGR
+        # R channel is at index 2
+        r_idx, g_idx, b_idx = 2, 1, 0
+    
+    # R at positions (even row, even column)
+    bayer[0::2, 0::2] = img[0::2, 0::2, r_idx]
+    
+    # G at positions (even row, odd column)
+    bayer[0::2, 1::2] = img[0::2, 1::2, g_idx]
+    
+    # G at positions (odd row, even column)
+
+    bayer[1::2, 0::2] = img[1::2, 0::2, g_idx]    
+    # B at positions (odd row, odd column)
+    bayer[1::2, 1::2] = img[1::2, 1::2, b_idx]
+
+    return bayer
+
 def deep_learing_processing(raw_img, device='cpu'):
     """
     Placeholder for deep learning processing function.
@@ -98,9 +145,14 @@ def deep_learing_processing(raw_img, device='cpu'):
     """
     logger.info("Processing image with dimensions: %s", raw_img.shape)
     if raw_img.ndim == 3: # if it is a 3D array
-        raw_img = raw_img[..., 0]
-        logger.info(f"Extracted the first channel. dimensions: {raw_img.shape}")
-    
+        if np.sum(raw_img[..., 0]) == np.sum(raw_img[..., 1] ): # all the channels are duplicate      
+            raw_img = raw_img[..., 0]
+            logger.info(f"All three channels are duplicate. Extracted the first channel. Dimensions: {raw_img.shape}")
+        else:
+            logger.info('Converting R, G, B image back to RGGB mosaic')
+            raw_img = color_to_rggb(raw_img, format="BGR")
+            logger.info(f'Conversion successful, new shape: {raw_img.shape}')
+
     H, W = raw_img.shape
     H_pad = ((H + 7) // 8) * 8
     W_pad = ((W + 7) // 8) * 8
@@ -108,12 +160,13 @@ def deep_learing_processing(raw_img, device='cpu'):
     pad_right  = W_pad - W
 
     raw_padded = np.pad(raw_img, ((0, pad_bottom), (0, pad_right)), mode='constant', constant_values=0)
-
+    logger.info(f'Padded raw image from shape {H, W} to {raw_padded.shape}')
     # this function call returns the raw image demosaiced
     # and the processed image (the raw image processed by the model)
     output_padded, raw_norm_padded = run_liteisp_on_raw(model, raw_array=raw_padded, device=device)
 
     # now, unpad the images (since they were most likely padded. if no padding was done, they the 2 lines below do not make any changes)
+    logger.info('unpadding any applied padding')
     processed_img = output_padded[:H, :W, :]
     raw_demosaiced = raw_norm_padded[:H, :W]
 
@@ -186,14 +239,16 @@ def process_image():
         try:
             # If metadata contains width and height, use those, however i will be just deducing the height and width from the input image itself
             # so this may be removed in future
-            raw_img = cv2.imread(input_filepath, cv2.IMREAD_UNCHANGED)
+            # raw_img = cv2.imread(input_filepath, cv2.IMREAD_UNCHANGED)
+            raw_img = cv2.imread(input_filepath, cv2.IMREAD_COLOR) # loads bgr by default
+            # raw_img = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB) # convert to rgb
             # if 'width' in metadata and 'height' in metadata:
             #     width = int(metadata['width'])
             #     height = int(metadata['height'])
             # else:
             #     width, height = img.shape[:2]
             
-            # # Create numpy array from the cv2 image object
+            # # Create numpy array from the cv2 image objectrgb_to_rggb
             # bayer_array = np.array(img, dtype=np.uint8)
             logger.info(f"Read raw image from disk {raw_img.shape}")
         except Exception as e:

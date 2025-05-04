@@ -289,6 +289,11 @@ select:focus {
 
 .image-container {
     text-align: center;
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    overflow: hidden; /* Important for containing the images */
 }
 
 .image-container h3 {
@@ -314,10 +319,19 @@ select:focus {
     margin-bottom: 15px;
 }
 
-#processed-image {
+#processed-image,
+#raw_vis-image {
     max-width: 100%;
+    height: auto;
     border-radius: 8px;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    display: block;
+    margin: 0 auto;
+    object-fit: contain; /* Maintains aspect ratio without stretching */
+    background-color: #f5f5f5; /* Light background to make transparent areas visible */
+}
+.image-container img {
+    min-height: 200px; /* Provides space while loading */
 }
 
 .download-section {
@@ -416,7 +430,7 @@ footer a {
 }
 
 /* Responsive Adjustments */
-@media (max-width: 768px) {
+/* @media (max-width: 768px) {
     body {
         padding: 10px;
     }
@@ -438,6 +452,12 @@ footer a {
     }
     
     .metadata-inputs {
+        grid-template-columns: 1fr;
+    }
+} */
+
+@media (max-width: 768px) {
+    .images-comparison {
         grid-template-columns: 1fr;
     }
 }
