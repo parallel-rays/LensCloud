@@ -43,6 +43,7 @@ model = LiteISPNet()
 # load the trained model
 device = 'cpu'
 model.load_state_dict(torch.load('trained_models/ispnet_model.pth')['state_dict'])
+# model.load_state_dict(torch.load('trained_models/ispnet_model.onnx')['state_dict'])
 model.to(device).eval()
 
 # some helper function for data preprocessing
@@ -163,6 +164,7 @@ def deep_learing_processing(raw_img, device='cpu'):
     logger.info(f'Padded raw image from shape {H, W} to {raw_padded.shape}')
     # this function call returns the raw image demosaiced
     # and the processed image (the raw image processed by the model)
+    logger.info('Passing the image through the deep learning model')
     output_padded, raw_norm_padded = run_liteisp_on_raw(model, raw_array=raw_padded, device=device)
 
     # now, unpad the images (since they were most likely padded. if no padding was done, they the 2 lines below do not make any changes)
