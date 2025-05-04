@@ -209,6 +209,7 @@ def process_image():
             return jsonify({'error': 'No file part in the request'}), 400
         
         file = request.files['bayer_image']
+        logger.info(f"request.files['bayer_image']: {request.files['bayer_image']}")
         
         # Check if file is selected
         if file.filename == '':
@@ -239,19 +240,18 @@ def process_image():
         
         
         try:
-            # If metadata contains width and height, use those, however i will be just deducing the height and width from the input image itself
-            # so this may be removed in future
-            # raw_img = cv2.imread(input_filepath, cv2.IMREAD_UNCHANGED)
-            raw_img = cv2.imread(input_filepath, cv2.IMREAD_COLOR) # loads bgr by default
-            # raw_img = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB) # convert to rgb
-            # if 'width' in metadata and 'height' in metadata:
-            #     width = int(metadata['width'])
-            #     height = int(metadata['height'])
-            # else:
-            #     width, height = img.shape[:2]
+            # Read the image with IMREAD_UNCHANGED to preserve all channels and bit depth
+            raw_img = cv2.imread(input_filepath, cv2.IMREAD_UNCHANGED).astype(np.float32)
+            logger.info(f"Image dimensions: {raw_img.shape}, ndim: {raw_img.ndim}")
             
-            # # Create numpy array from the cv2 image objectrgb_to_rggb
-            # bayer_array = np.array(img, dtype=np.uint8)
+            # Check if image values are in [0,1] range and normalize if needed
+            max_val = np.max(raw_img)
+            logger.info(f"Max value in image: {max_val}")
+            
+            if max_val <= 1.0:
+                logger.info("Image values in [0,1] range, scaling to [0,255]")
+                raw_img = raw_img * 255.0
+                
             logger.info(f"Read raw image from disk {raw_img.shape}")
         except Exception as e:
             logger.error(f"Error reading raw image from disk {str(e)}")
@@ -259,7 +259,7 @@ def process_image():
         
         # Process the image
         try:
-            processed_img, raw_demosaiced  = deep_learing_processing(raw_img)
+            processed_img, raw_demosaiced = deep_learing_processing(raw_img)
             logger.info(f"Processed image to shape {processed_img.shape}")
             logger.info(f"Demosaiced raw image to shape {raw_demosaiced.shape}")
         except Exception as e:
@@ -293,7 +293,6 @@ def process_image():
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
-
 
 @app.route('/processed/<filename>')
 def processed_file(filename):

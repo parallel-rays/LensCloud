@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css">
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -23,24 +25,38 @@
                     <div class="card-body">
                         <form id="upload-form" enctype="multipart/form-data">
                             <div class="form-group">
-                                <label for="bayer-image">Select Raw Bayer Image:</label>
-                                <input type="file" id="bayer-image" name="bayer_image" accept=".raw,.bin,.data, .png,.jpg,.jpeg" required>
+                                <label for="bayer-image">Select Bayer Pattern Image File</label>
+                                <div class="drop-area" id="drop-area">
+                                    <div class="drop-message">
+                                        <i class="fas fa-cloud-upload-alt"></i>
+                                        <p>Drag & drop image here or click to browse</p>
+                                    </div>
+                                    <input type="file" id="bayer-image" name="bayer_image" accept="image/*"
+                                        class="file-input">
+                                </div>
+                                <div class="file-info" id="file-info" style="display: none;">
+                                    <span class="file-name" id="file-name"></span>
+                                    <span class="file-size" id="file-size"></span>
+                                </div>
                             </div>
-                            
-                            <div class="form-group metadata-section">
-                                <label for="metadata">Image Metadata (optional):</label>
+
+                            <div class="metadata-section">
+                                <h3>Optional Metadata</h3>
+                                <p class="subtitle">If your image doesn't have embedded metadata, you can specify it
+                                    manually:</p>
                                 <div class="metadata-inputs">
-                                    <div class="metadata-input">
-                                        <label for="width">Width:</label>
-                                        <input type="number" id="width" name="width" placeholder="Image width">
+                                    <div class="form-group metadata-input">
+                                        <label for="width">Width (pixels)</label>
+                                        <input type="number" id="width" name="width" placeholder="Auto-detect">
                                     </div>
-                                    <div class="metadata-input">
-                                        <label for="height">Height:</label>
-                                        <input type="number" id="height" name="height" placeholder="Image height">
+                                    <div class="form-group metadata-input">
+                                        <label for="height">Height (pixels)</label>
+                                        <input type="number" id="height" name="height" placeholder="Auto-detect">
                                     </div>
-                                    <div class="metadata-input">
-                                        <label for="bit-depth">Bit Depth:</label>
-                                        <select id="bit-depth" name="bit_depth">
+                                    <div class="form-group metadata-input">
+                                        <label for="bit-depth">Bit Depth</label>
+                                        <select id="bit-depth" name="bit-depth">
+                                            <option value="">Auto-detect</option>
                                             <option value="8">8-bit</option>
                                             <option value="10">10-bit</option>
                                             <option value="12">12-bit</option>
@@ -48,10 +64,11 @@
                                             <option value="16">16-bit</option>
                                         </select>
                                     </div>
-                                    <div class="metadata-input">
-                                        <label for="bayer-pattern">Bayer Pattern:</label>
-                                        <select id="bayer-pattern" name="bayer_pattern">
-                                            <option value="RGGB" selected>RGGB</option>
+                                    <div class="form-group metadata-input">
+                                        <label for="bayer-pattern">Bayer Pattern</label>
+                                        <select id="bayer-pattern" name="bayer-pattern">
+                                            <option value="">Auto-detect</option>
+                                            <option value="RGGB">RGGB</option>
                                             <option value="BGGR">BGGR</option>
                                             <option value="GRBG">GRBG</option>
                                             <option value="GBRG">GBRG</option>
@@ -59,13 +76,10 @@
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div class="form-actions">
-                                <button type="submit" class="btn primary" id="process-btn">
+                                <button type="submit" id="process-btn" class="btn primary">
                                     <i class="fas fa-cogs"></i> Process Image
-                                </button>
-                                <button type="reset" class="btn secondary">
-                                    <i class="fas fa-sync"></i> Reset
                                 </button>
                             </div>
                         </form>
@@ -106,7 +120,7 @@
                                     <span class="stat-value success" id="processing-status">Success</span>
                                 </div>
                             </div>
-                            
+
                             <div class="images-comparison">
                                 <div class="image-container">
                                     <h3>Raw Image Visualized</h3>
@@ -117,7 +131,7 @@
                                     <img id="processed-image" src="" alt="Processed Image">
                                 </div>
                             </div>
-                            
+
                             <div class="download-section">
                                 <a id="download-link" class="btn primary" download>
                                     <i class="fas fa-download"></i> Download Processed Image
@@ -130,7 +144,7 @@
                     </div>
                 </div>
             </section>
-            
+
             <section class="error-section" id="error-section" style="display: none;">
                 <div class="card error-card">
                     <div class="card-header">
@@ -144,56 +158,59 @@
                     </div>
                 </div>
             </section>
-        </main>
 
-        <!-- Not Needed. was useful during development only -->
-        <!-- <section class="api-documentation">
-            <div class="card">
-                <div class="card-header">
-                    <h2><i class="fas fa-code"></i> API Documentation</h2>
-                </div>
-                <div class="card-body">
-                    <div class="api-endpoint">
-                        <h3>POST /process</h3>
-                        <p>Upload a raw Bayer image for processing via API</p>
-                        
-                        <div class="endpoint-details">
-                            <div class="endpoint-section">
-                                <h4>Request Parameters:</h4>
-                                <ul>
-                                    <li><strong>bayer_image</strong>: (required) The raw Bayer image file</li>
-                                    <li><strong>metadata</strong>: (optional) JSON object containing image metadata</li>
-                                </ul>
-                            </div>
-                            
-                            <div class="endpoint-section">
-                                <h4>Example cURL Request:</h4>
-                                <pre><code>curl -X POST \
-  http://your-server:5000/process \
-  -F "bayer_image=@/path/to/image.raw" \
-  -F 'metadata={"width": 4032, "height": 3024, "bit_depth": 10, "bayer_pattern": "RGGB"}'</code></pre>
-                            </div>
-                            
-                            <div class="endpoint-section">
-                                <h4>Example Response:</h4>
-                                <pre><code>{
-  "success": true,
-  "image_url": "/processed/abc123_output.png",
-  "processing_time": 1.25,
-  "message": "Image processed successfully"
-}</code></pre>
+            <!-- Not Needed. was useful during development only -->
+            <section class="api-documentation">
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-code"></i> API Documentation</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="api-endpoint">
+                            <h3>POST /process</h3>
+                            <p>Upload a raw Bayer image for processing via API</p>
+
+                            <div class="endpoint-details">
+                                <div class="endpoint-section">
+                                    <h4>Request Parameters:</h4>
+                                    <ul>
+                                        <li><strong>bayer_image</strong>: (required) The raw Bayer image file</li>
+                                        <li><strong>metadata</strong>: (optional) JSON object containing image metadata
+                                        </li>
+                                    </ul>
+                                </div>
+
+                                <div class="endpoint-section">
+                                    <h4>Example cURL Request:</h4>
+                                    <pre><code>curl -X POST \
+      http://your-server:5000/process \
+      -F "bayer_image=@/path/to/image.raw" \
+      -F 'metadata={"width": 4032, "height": 3024, "bit_depth": 10, "bayer_pattern": "RGGB"}'</code></pre>
+                                </div>
+
+                                <div class="endpoint-section">
+                                    <h4>Example Response:</h4>
+                                    <pre><code>{
+      "success": true,
+      "image_url": "/processed/abc123_output.png",
+      "processing_time": 1.25,
+      "message": "Image processed successfully"
+    }</code></pre>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
-        </section> -->
+            </section>
 
+        </main>
         <footer>
-            <p>&copy; <span id="current-year"></span> Bayer Image Processor | <a href="#" id="api-status-check">API Status</a> <span id="api-status"></span></p>
+            <p>&copy; <span id="current-year"></span> Bayer Image Processor | <a href="#" id="api-status-check">API
+                    Status</a> <span id="api-status"></span></p>
         </footer>
     </div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
+
 </html>
