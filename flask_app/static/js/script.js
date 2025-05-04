@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressFill      = document.getElementById('progress-fill');
     const statusMessage     = document.getElementById('status-message');
     const processingTime    = document.getElementById('processing-time');
-    const origBayerImage    = document.getElementById('processed-image');
+    const rawVisualized     = document.getElementById('raw_vis-image');
     const processedImage    = document.getElementById('processed-image');
     const downloadLink      = document.getElementById('download-link');
     const startNewBtn       = document.getElementById('start-new');
@@ -78,8 +78,10 @@ document.addEventListener('DOMContentLoaded', () => {
           resultsSection.style.display    = 'block';
           processingTime.textContent      = data.processing_time.toFixed(2);
           processedImage.src              = data.image_url;
+          rawVisualized.src               = data.raw_vis_url;
           downloadLink.href               = data.image_url;
-  
+          console.log(data.image_url)
+          console.log(data.raw_vis_url)
           // give it a nice download name
           const orig = fileInputElm.files[0].name.split('.');
           const ext  = orig.pop();

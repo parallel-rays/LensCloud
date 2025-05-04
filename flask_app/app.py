@@ -16,8 +16,10 @@ import logging
 import time
 import json
 import cv2
+import torch
+from ispnet import LiteISPNet
 
-# Set up logging
+# set up logging functionalites
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -27,45 +29,101 @@ app = Flask(__name__)
 BASE_DIR = app.root_path  
 app.config['UPLOAD_FOLDER'] = os.path.join(BASE_DIR, 'uploads')
 app.config['PROCESSED_FOLDER'] = os.path.join(BASE_DIR, 'processed')
+app.config['RAW_VISUALIZED'] = os.path.join(BASE_DIR, 'raw_visualized')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 
-# Create necessary folders if they don't exist
+# create upload and processsed image folders
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
+os.makedirs(app.config['RAW_VISUALIZED'], exist_ok=True)
 
 
-def placeholder_deep_learning_process(bayer_image):
+# load the model once (since it's costly to do it again and again)
+model = LiteISPNet()
+# load the trained model
+device = 'cpu'
+model.load_state_dict(torch.load('trained_models/ispnet_model.pth')['state_dict'])
+model.to(device).eval()
+
+# some helper function for data preprocessing
+def remove_black_level(img, black_lv=63, white_lv=4*255):
+    img = np.maximum(img.astype(np.float32)-black_lv, 0) / (white_lv-black_lv)
+    return img
+
+def extract_bayer_channels(raw):
+    ch_R  = raw[0::2, 0::2]
+    ch_Gb = raw[0::2, 1::2]
+    ch_Gr = raw[1::2, 0::2]
+    ch_B  = raw[1::2, 1::2]
+    raw_combined = np.stack((ch_B, ch_Gb, ch_R, ch_Gr), axis=2)
+    return np.ascontiguousarray(raw_combined.transpose(2,0,1))
+
+def get_coord(H, W, x=1, y=1):
+    xs = np.linspace(-x + x/W, x - x/W, W, dtype=np.float32)
+    ys = np.linspace(-y + y/H, y - y/H, H, dtype=np.float32)
+    x_grid = np.repeat(xs[np.newaxis, :], H, axis=0)
+    y_grid = np.repeat(ys[:, np.newaxis], W, axis=1)
+    return np.stack((x_grid, y_grid), axis=0)
+
+# the core inference function
+def run_liteisp_on_raw(model, raw_png_path=None, raw_array=None, device='cpu'):
+    if raw_array is None:
+        raw = cv2.imread(raw_png_path, cv2.IMREAD_UNCHANGED)
+        if raw is None:
+            raise FileNotFoundError(f"Can't read {raw_png_path}")
+    else:
+        raw = raw_array
+    if raw.ndim == 3:
+        raw = raw[..., 0]
+    raw_norm = remove_black_level(raw)
+    raw_combined = extract_bayer_channels(raw_norm)
+    _, H, W = raw_combined.shape
+    coord_t = torch.from_numpy(get_coord(H, W)).unsqueeze(0).to(device)
+    raw_t   = torch.from_numpy(raw_combined).unsqueeze(0).to(device)
+    with torch.no_grad():
+        out_t = model(raw_t, coord_t)
+    out_np = out_t[0].permute(1,2,0).cpu().numpy()
+    return np.clip(out_np,0,1), raw_norm
+
+def deep_learing_processing(raw_img, device='cpu'):
     """
     Placeholder for deep learning processing function.
     
     Args:
         bayer_image (numpy.ndarray): Raw Bayer image as numpy array
-        This is supposed to be a 2D array
+        This is supposed to be a 2D array. (can be a 3D too but each channel is the other's duplicate)
         
     Returns:
         numpy.ndarray: Processed image
     """
-    logger.info("Processing image with dimensions: %s", bayer_image.shape)
-    bayer_image = bayer_image[:, :, 0] # during development only since input is a 3D array. bayer is supposed to be a 2D one 
-    # This is where you would implement your deep learning processing
-    # For now, we'll just create a simple debayering simulation
-    # In a real implementation, you would replace this with your deep learning model
+    logger.info("Processing image with dimensions: %s", raw_img.shape)
+    if raw_img.ndim == 3: # if it is a 3D array
+        raw_img = raw_img[..., 0]
+        logger.info(f"Extracted the first channel. dimensions: {raw_img.shape}")
     
-    # Simulate processing time
-    time.sleep(3)
-    
-    # Simple debayering simulation (not accurate, just for demonstration)
-    # Assuming RGGB Bayer pattern
-    height, width = bayer_image.shape[:2]
-    rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
-    
-    # Very simplified debayering (this is not correct debayering, just a placeholder)
-    # In reality, you would use a proper demosaicing algorithm or your deep learning model
-    rgb_image[:, :, 0] = bayer_image  # Red channel
-    rgb_image[:, :, 1] = bayer_image  # Green channel
-    rgb_image[:, :, 2] = bayer_image  # Blue channel
-    
-    return rgb_image
+    H, W = raw_img.shape
+    H_pad = ((H + 7) // 8) * 8
+    W_pad = ((W + 7) // 8) * 8
+    pad_bottom = H_pad - H
+    pad_right  = W_pad - W
+
+    raw_padded = np.pad(raw_img, ((0, pad_bottom), (0, pad_right)), mode='constant', constant_values=0)
+
+    # this function call returns the raw image demosaiced
+    # and the processed image (the raw image processed by the model)
+    output_padded, raw_norm_padded = run_liteisp_on_raw(model, raw_array=raw_padded, device=device)
+
+    # now, unpad the images (since they were most likely padded. if no padding was done, they the 2 lines below do not make any changes)
+    processed_img = output_padded[:H, :W, :]
+    raw_demosaiced = raw_norm_padded[:H, :W]
+
+    # scale + convert
+    proc8 = (processed_img * 255.0).round().astype(np.uint8)
+    raw8  = (raw_demosaiced * 255.0).round().astype(np.uint8)
+    # RGB→BGR for OpenCV
+    proc8_bgr = cv2.cvtColor(proc8, cv2.COLOR_RGB2BGR)
+    return proc8_bgr, raw8
+
 
 
 @app.route('/')
@@ -115,56 +173,62 @@ def process_image():
         
         # Generate unique filename for the uploaded and processed images
         unique_id = str(uuid.uuid4())
-        input_filename = f"{unique_id}_input.raw"
+        input_filename = f"{unique_id}_input.png"
         output_filename = f"{unique_id}_output.png"
-        
+        raw_vis_filename = f"{unique_id}_raw_vis.png"
+
         # Save the uploaded file
         input_filepath = os.path.join(app.config['UPLOAD_FOLDER'], input_filename)
         file.save(input_filepath)
         logger.info(f"Saved input file to {input_filepath}")
         
-        # Read the Bayer image
-        # Note: In a real app, you might need more metadata about the image dimensions
-        # and Bayer pattern to correctly read and process it
-        img = cv2.imread(input_filepath)
-
+        
         try:
-            # If metadata contains width and height, use those
-            if 'width' in metadata and 'height' in metadata:
-                width = int(metadata['width'])
-                height = int(metadata['height'])
-            else:
-                width, height = img.shape[:2]
+            # If metadata contains width and height, use those, however i will be just deducing the height and width from the input image itself
+            # so this may be removed in future
+            raw_img = cv2.imread(input_filepath, cv2.IMREAD_UNCHANGED)
+            # if 'width' in metadata and 'height' in metadata:
+            #     width = int(metadata['width'])
+            #     height = int(metadata['height'])
+            # else:
+            #     width, height = img.shape[:2]
             
-            # Create numpy array from raw bytes
-            bayer_array = np.array(img, dtype=np.uint8)
-            logger.info(f"Converted Bayer data to array of shape {bayer_array.shape}")
+            # # Create numpy array from the cv2 image object
+            # bayer_array = np.array(img, dtype=np.uint8)
+            logger.info(f"Read raw image from disk {raw_img.shape}")
         except Exception as e:
-            logger.error(f"Error converting Bayer data to array or error getting shape: {str(e)}")
+            logger.error(f"Error reading raw image from disk {str(e)}")
             return jsonify({'error': f'Error processing image: {str(e)}'}), 500
         
         # Process the image
         try:
-            processed_image = placeholder_deep_learning_process(bayer_array)
-            logger.info(f"Processed image to shape {processed_image.shape}")
+            processed_img, raw_demosaiced  = deep_learing_processing(raw_img)
+            logger.info(f"Processed image to shape {processed_img.shape}")
+            logger.info(f"Demosaiced raw image to shape {raw_demosaiced.shape}")
         except Exception as e:
             logger.error(f"Error in deep learning processing: {str(e)}")
             return jsonify({'error': f'Error in deep learning processing: {str(e)}'}), 500
         
         # Save the processed image
-        output_filepath = os.path.join(app.config['PROCESSED_FOLDER'], output_filename)
-        Image.fromarray(processed_image).save(output_filepath)
-        logger.info(f"Saved processed image to {output_filepath}")
+        processed_outpath = os.path.join(app.config['PROCESSED_FOLDER'], output_filename)
+        raw_vis_outpath = os.path.join(app.config['RAW_VISUALIZED'], raw_vis_filename)
+        # Image.fromarray(processed_img).save(output_filepath)
+        cv2.imwrite(processed_outpath, processed_img)
+        cv2.imwrite(raw_vis_outpath, raw_demosaiced)
+        logger.info(f"Saved processed image to {processed_outpath}")
+        logger.info(f"Saved raw demosaiced image to {raw_vis_outpath}")
         
         # Calculate processing time
         processing_time = time.time() - start_time
         
-        # Return the URL to the processed image
+        # Return the URL to the processed image. this will then be used in the https request to be downloaded
         image_url = f"/processed/{output_filename}"
-        
+        raw_vis_url = f"/raw_visualized/{raw_vis_filename}"
+
         return jsonify({
             'success': True,
             'image_url': image_url,
+            'raw_vis_url': raw_vis_url,
             'processing_time': processing_time,
             'message': 'Image processed successfully'
         })
@@ -179,6 +243,10 @@ def processed_file(filename):
     """Serve processed image files."""
     return send_from_directory(app.config['PROCESSED_FOLDER'], filename)
 
+@app.route('/raw_visualized/<filename>')
+def raw_visualized_file(filename):
+    """Server the raw image visuzlied via demosaicking"""
+    return send_from_directory(app.config['RAW_VISUALIZED'], filename)
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
@@ -193,6 +261,5 @@ def test_api():
 
 
 if __name__ == '__main__':
-    # Run the Flask application
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)

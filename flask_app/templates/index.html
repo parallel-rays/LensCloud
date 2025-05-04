@@ -24,7 +24,7 @@
                         <form id="upload-form" enctype="multipart/form-data">
                             <div class="form-group">
                                 <label for="bayer-image">Select Raw Bayer Image:</label>
-                                <input type="file" id="bayer-image" name="bayer_image" accept=".raw,.bin,.data" required>
+                                <input type="file" id="bayer-image" name="bayer_image" accept=".raw,.bin,.data, .png,.jpg,.jpeg" required>
                             </div>
                             
                             <div class="form-group metadata-section">
@@ -109,11 +109,8 @@
                             
                             <div class="images-comparison">
                                 <div class="image-container">
-                                    <h3>Original Image Representation</h3>
-                                    <div class="image-placeholder">
-                                        <i class="fas fa-image"></i>
-                                        <p>Original image representation is not available for raw Bayer data</p>
-                                    </div>
+                                    <h3>Raw Image Visualized</h3>
+                                    <img id="raw_vis-image" src="" alt="Raw Image Visualized">
                                 </div>
                                 <div class="image-container">
                                     <h3>Processed Image</h3>
@@ -149,7 +146,8 @@
             </section>
         </main>
 
-        <section class="api-documentation">
+        <!-- Not Needed. was useful during development only -->
+        <!-- <section class="api-documentation">
             <div class="card">
                 <div class="card-header">
                     <h2><i class="fas fa-code"></i> API Documentation</h2>
@@ -189,7 +187,7 @@
                     </div>
                 </div>
             </div>
-        </section>
+        </section> -->
 
         <footer>
             <p>&copy; <span id="current-year"></span> Bayer Image Processor | <a href="#" id="api-status-check">API Status</a> <span id="api-status"></span></p>

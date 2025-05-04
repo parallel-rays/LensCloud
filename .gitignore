@@ -1,10 +1,14 @@
 CameraNet_official-master
+flask_app/processed
+flask_app/raw_visualized
+flask_app/uploads
 hdr+
 lite_isp_models
 lite_isp_repo/ckpt
 PhotonCamera-dev
 srraw
-Zurich-RAW-to-DSLR-Dataset
+Zurich-RAW-to-DSLR
+Zurich-RAW-to-DSLR-Dataset.zip
 CameraNet_official-master.zip
 lite_isp_models.zip
 PhotonCamera-dev.zip
