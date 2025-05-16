@@ -1,0 +1,44 @@
+below is a approach used to determine the bayer pattern
+sufficiently red, blue and green images were captured
+these files are directly from a smartphone camera
+these are raw images the smartphone transfers over the network
+
+the bayer pattern is as follows
+
+[[3, 2, 3, ..., 2, 3, 2],
+[0, 1, 0, ..., 1, 0, 1],
+[3, 2, 3, ..., 2, 3, 2],
+...,
+[0, 1, 0, ..., 1, 0, 1],
+[3, 2, 3, ..., 2, 3, 2],
+[0, 1, 0, ..., 1, 0, 1]]
+
+the bayer raw image is composed of repeating bayer pattern
+for red
+the value at 0 was consistently seen higher
+
+for green
+the values at 1 and 3 were consistently seen higher
+
+for blue
+the value at 2 was consistently seen higher
+
+so, now it is clear that the pattern is
+
+G B
+R G
+
+or RGBG 
+
+There is reason to believe that the zrr dataset is of the form
+
+B G
+G R
+
+GRGB
+
+So, rotating the original image's each of the 2 by 2 matrices by 90 degree anti clockwise
+will do the following
+RGBG to GRGB 
+
+G's may not always lie diagonally in which case flips and transposes may be needed
