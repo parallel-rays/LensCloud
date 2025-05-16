@@ -127,7 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const file = this.files[0];
             const fileSize = file.size / 1024 / 1024; // size in MB
             
-            if (fileSize > 16) {
+            if (fileSize > 64) {
                 showError('File size exceeds the maximum limit of 16MB');
                 this.value = '';
                 return;

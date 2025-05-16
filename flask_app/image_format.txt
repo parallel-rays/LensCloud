@@ -1,44 +1,110 @@
-below is a approach used to determine the bayer pattern
-sufficiently red, blue and green images were captured
-these files are directly from a smartphone camera
-these are raw images the smartphone transfers over the network
+# Smartphone image pattern decoding
+    To determine the format of the smartphone image, it is read via rawpy
+    im = rawpy.imread('real_camera_raw_images/white.dng');
+    im.color_desc
+    b'RGBG'
 
-the bayer pattern is as follows
+    im.raw_pattern
+    array([[3, 2],
+        [0, 1]], dtype=uint8)
 
-[[3, 2, 3, ..., 2, 3, 2],
-[0, 1, 0, ..., 1, 0, 1],
-[3, 2, 3, ..., 2, 3, 2],
-...,
-[0, 1, 0, ..., 1, 0, 1],
-[3, 2, 3, ..., 2, 3, 2],
-[0, 1, 0, ..., 1, 0, 1]]
 
-the bayer raw image is composed of repeating bayer pattern
-for red
-the value at 0 was consistently seen higher
 
-for green
-the values at 1 and 3 were consistently seen higher
+    this tells us that the format of the image is RGBG
 
-for blue
-the value at 2 was consistently seen higher
+    to confirm this, each of the R, 2*G and B channels are extracted from the image via
 
-so, now it is clear that the pattern is
+    top_left     = raw_data[0::2, 0::2]
+    top_right    = raw_data[0::2, 1::2]
+    bottom_left  = raw_data[1::2, 0::2]
+    bottom_right = raw_data[1::2, 1::2]
 
-G B
-R G
+    we then print the values
+    print(np.sum(top_left), np.sum(top_right), np.sum(bottom_left), np.sum(bottom_right))
 
-or RGBG 
+    this gives the output
 
-There is reason to believe that the zrr dataset is of the form
+    .. for a sufficiently white image
+        645768739 440936188 466730801 644501155 
 
-B G
-G R
+    1. for a sufficiently red image
+        419497703 298236449 623575845 419246527
+                                R
 
-GRGB
+    2. for a sufficiently green image
+        676819034 348814690 360785774 675832159
+            G                            G
+    
+    3. for a sufficiently blue image
+        552085506 793908450 290480190 550582865
+                     B
+    
+    This tells use that one Bayer array looks like this
 
-So, rotating the original image's each of the 2 by 2 matrices by 90 degree anti clockwise
-will do the following
-RGBG to GRGB 
+    G B
+    R G
 
-G's may not always lie diagonally in which case flips and transposes may be needed
+    Our double check shows that the pattern claimed by rawpy is indeed correct
+
+
+# ZRR Data image patter decoding
+    This is going to be a bit difficult since we can't just take image of our own
+    We'll have to make do with the existing image
+
+    First we'll note down values of random images. Two similar ones are probably G
+
+    (
+        I just found out that we can do cv2.IMREAD_UNCHANGED for the zrr training .png 
+        which load the images as 2D
+            im = cv2.imread('3.png', cv2.IMREAD_UNCHANGED)
+            im.shape
+            (2976, 3968)
+            im = cv2.imread('test.png', cv2.IMREAD_UNCHANGED)
+            im.shape
+            (448, 448)
+    )
+
+    o. For a Random image
+        318979941 531141693 530893491 435735904
+                     G         G
+        
+        The pattern is most likely
+        R G
+        G B
+
+        or in string format: GBGR
+        
+# Decoding image from FileStorage bytes Data
+
+    When you do
+
+    ```python
+    buf = file.read()
+    arr = np.frombuffer(buf, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+    ```
+
+    the `np.uint8` isn’t about the image’s bit‑depth, it’s about how you pull raw bytes off disk.
+
+    1. **Byte stream vs pixel array**
+    The upload is just a sequence of bytes.  A PNG file on disk is made up of 8‑bit bytes, regardless of whether it encodes 8‑bit or 16‑bit pixels inside.  If you tried
+
+    ```python
+    arr = np.frombuffer(buf, dtype=np.uint16)
+    ```
+
+    you’d be telling NumPy “group every two bytes into one 16‑bit word,” mangling your PNG headers and data.
+
+    2. **Where the 16‑bit shows up**
+    `cv2.imdecode(..., cv2.IMREAD_UNCHANGED)` will look at the PNG headers and, if it really is a 16‑bit‑per‑channel image, return you an array of dtype `uint16`.  You can verify:
+
+    ```python
+    print(img.dtype)   # => uint16 for a 16‑bit PNG, uint8 for an 8‑bit PNG
+    ```
+
+    3. **Saving**
+    Once `img` is a `uint16` array, `cv2.imwrite('out.png', img)` will write out a true 16‑bit PNG again.
+
+    ---
+
+    So: **you must** use `dtype=np.uint8` when reading the raw upload bytes.  The decoded image itself can—and will—have `dtype=uint16` if the source was 16‑bit.

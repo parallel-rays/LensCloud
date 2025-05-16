@@ -32,7 +32,7 @@ BASE_DIR = app.root_path
 app.config['UPLOAD_FOLDER'] = os.path.join(BASE_DIR, 'uploads')
 app.config['PROCESSED_FOLDER'] = os.path.join(BASE_DIR, 'processed')
 app.config['RAW_VISUALIZED'] = os.path.join(BASE_DIR, 'raw_visualized')
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # 16MB max upload
 
 # create upload and processsed image folders
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -51,14 +51,35 @@ model.to(device).eval()
 # some helper function for data preprocessing
 def remove_black_level(img, black_lv=63, white_lv=4*255):
     img = np.maximum(img.astype(np.float32)-black_lv, 0) / (white_lv-black_lv)
+    logger.info(f"np.max(img): {np.max(img)}")
     return img
 
-def extract_bayer_channels(raw):
-    ch_R  = raw[0::2, 0::2]
-    ch_Gb = raw[0::2, 1::2]
-    ch_Gr = raw[1::2, 0::2]
-    ch_B  = raw[1::2, 1::2]
+def extract_bayer_channels(raw, bayer_format='GBGR'):
+    logger.info(f"bayer_format: {bayer_format}")
+    if bayer_format == 'GBGR':
+
+        # R G
+        # G B
+
+        ch_R  = raw[0::2, 0::2]
+        ch_Gb = raw[0::2, 1::2]
+        ch_Gr = raw[1::2, 0::2]
+        ch_B  = raw[1::2, 1::2]
+    elif bayer_format == 'RGBG':
+        
+        # G B
+        # R G
+
+        ch_Gr = raw[0::2, 0::2]
+        ch_B  = raw[0::2, 1::2]
+        ch_R  = raw[1::2, 0::2]
+        ch_Gb = raw[1::2, 1::2]
+    else:
+        logger.warning("Bayer format not one of 'GBGR' or 'RGBG'")
+
     raw_combined = np.stack((ch_B, ch_Gb, ch_R, ch_Gr), axis=2)
+    logger.info(f"np.sum(ch_R), np.sum(ch_Gb), np.sum(ch_Gr), np.sum(ch_B): {np.sum(ch_R), np.sum(ch_Gb), np.sum(ch_Gr), np.sum(ch_B)}")
+    # assert 0, 'Bye bye'
     return np.ascontiguousarray(raw_combined.transpose(2,0,1))
 
 def get_coord(H, W, x=1, y=1):
@@ -69,17 +90,13 @@ def get_coord(H, W, x=1, y=1):
     return np.stack((x_grid, y_grid), axis=0)
 
 # the core inference function
-def run_liteisp_on_raw(model, raw_png_path=None, raw_array=None, device='cpu'):
-    if raw_array is None:
-        raw = cv2.imread(raw_png_path, cv2.IMREAD_UNCHANGED)
-        if raw is None:
-            raise FileNotFoundError(f"Can't read {raw_png_path}")
-    else:
-        raw = raw_array
+def run_liteisp_on_raw(model, raw=None, device='cpu', bayer_format='GBGR'):
+    logger.info(f"Image being passed through the DL Model")
     if raw.ndim == 3:
         raw = raw[..., 0]
     raw_norm = remove_black_level(raw)
-    raw_combined = extract_bayer_channels(raw_norm)
+    # raw_norm = (raw/255).astype('float32')
+    raw_combined = extract_bayer_channels(raw_norm, bayer_format)
     _, H, W = raw_combined.shape
     coord_t = torch.from_numpy(get_coord(H, W)).unsqueeze(0).to(device)
     raw_t   = torch.from_numpy(raw_combined).unsqueeze(0).to(device)
@@ -88,81 +105,19 @@ def run_liteisp_on_raw(model, raw_png_path=None, raw_array=None, device='cpu'):
     out_np = out_t[0].permute(1,2,0).cpu().numpy()
     return np.clip(out_np,0,1), raw_norm
 
-def rgb_to_bayer(rgb_image, pattern='RGGB', gains=(1.0, 1.0, 1.0)):
-    """
-    Convert an RGB image back to a Bayer pattern single‑channel image,
-    applying the inverse of any channel gains.
 
-    Args:
-        rgb_image: Input RGB image (HxWx3), assumed uint8 or float32 in [0,255]
-        pattern: Bayer pattern arrangement ('RGGB', 'BGGR', 'GRBG', 'GBRG')
-        gains:  Tuple of (R_gain, G_gain, B_gain) that were applied in the forward pass
-
-    Returns:
-        Single‑channel Bayer pattern image, same dtype as input
-    """
-    if rgb_image.ndim != 3 or rgb_image.shape[2] != 3:
-        raise ValueError("Input must be an RGB image with 3 channels")
-
-    # Unpack inverse gains
-    inv_gains = (1.0 / gains[0], 1.0 / gains[1], 1.0 / gains[2])
-
-    height, width = rgb_image.shape[:2]
-    # Preserve dtype (uint8 or float32)
-    bayer_image = np.zeros((height, width), dtype=rgb_image.dtype)
-
-    # Map pattern letters to channel indices
-    pattern_map = {'R': 0, 'G': 1, 'B': 2}
-
-    if pattern not in ['RGGB', 'BGGR', 'GRBG', 'GBRG']:
-        raise ValueError("Pattern must be one of: RGGB, BGGR, GRBG, GBRG")
-
-    # Build 2×2 lookup of which channel goes where
-    pattern_matrix = [[pattern[0], pattern[1]],
-                      [pattern[2], pattern[3]]]
-
-    for y in range(height):
-        for x in range(width):
-            color = pattern_matrix[y & 1][x & 1]
-            c = pattern_map[color]
-            val = rgb_image[y, x, c]
-            # apply the inverse gain for that channel
-            val = val * inv_gains[c]
-            # clip & cast back if needed
-            if np.issubdtype(bayer_image.dtype, np.integer):
-                val = np.clip(val, 0, 255)
-            bayer_image[y, x] = val
-
-    return bayer_image
-
-
-def bgr_to_bayer(bgr_image, pattern='RGGB'):
-    """
-    Convert a BGR image (OpenCV default) back to a Bayer pattern single-channel image.
-    
-    Args:
-        bgr_image: Input BGR image (HxWx3)
-        pattern: Bayer pattern arrangement ('RGGB', 'BGGR', 'GRBG', 'GBRG')
-        
-    Returns:
-        Single-channel Bayer pattern image
-    """
-    # Convert BGR to RGB
-    rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-    # Then convert RGB to Bayer
-    return rgb_to_bayer(rgb_image, pattern)
-
-
-def deep_learing_processing(raw_img, device='cpu', scale_down=True):
-    logger.info("Processing image with dimensions: %s", raw_img.shape)
+def deep_learing_processing(raw_img, device='cpu', bayer_format='GBGR', scale_down=False):
+    logger.info("In def deep_learing_processing()")
+    logger.info(f"Preparing Processing of image with DL Model with dimensions: {raw_img.shape}",)
     # collapse or convert 3-channel duplicates
     if raw_img.ndim == 3:
         if np.allclose(raw_img[..., 0], raw_img[..., 1]) and np.allclose(raw_img[..., 1], raw_img[..., 2]):
             raw_img = raw_img[..., 0]
             logger.info("All three channels duplicate; using channel 0 only.")
-        else:
-            raw_img = bgr_to_bayer(raw_img, pattern="RGGB")
-            logger.info("Converted RGB back to RGGB mosaic.")
+            logger.warning(f"You should NOT be providing an input image with 3 dimensions")
+    else:
+        logger.info(f"Received RAW Image with {raw_img.ndim} dimension/s") # remove this later
+
     H_orig, W_orig = raw_img.shape
     
     # Ensure dimensions are multiples of 8 before any scaling
@@ -192,7 +147,7 @@ def deep_learing_processing(raw_img, device='cpu', scale_down=True):
     
     # run through the model
     logger.info("Passing the image through the deep learning model")
-    output_padded, raw_norm_padded = run_liteisp_on_raw(model, raw_array=raw_padded, device=device)
+    output_padded, raw_norm_padded = run_liteisp_on_raw(model, raw=raw_padded, device=device, bayer_format=bayer_format)
     
     # un-pad back to the padded (and possibly resized) size
     logger.info("Unpadding to padded/resized size")
@@ -266,12 +221,13 @@ def process_image():
 
         try:
             if is_dng:
+                bayer_format = 'RGBG'
                 logger.info("Processing DNG raw file")
                 
                 upload_filename = f"{unique_id}_upload.dng" 
                 upload_filepath = os.path.join(app.config['UPLOAD_FOLDER'], upload_filename)
                   
-                # Save the file content to a BytesIO object
+                # convert FileStorage obj to bytes
                 file_content = file.read()
                 file_stream = io.BytesIO(file_content)
                 
@@ -279,80 +235,50 @@ def process_image():
                     f.write(file_content)
                 logger.info(f"Saved original DNG file to {upload_filepath}")
 
-                # Process the DNG file directly from memory
-                with rawpy.imread(file_stream) as raw:
-                    # Get raw data and metadata
-                    data = raw.raw_image_visible.copy().astype(np.float32)
-                    pat = raw.raw_pattern  # e.g. array([[3,2],[0,1]])
-                    desc = raw.color_desc.decode()  # e.g. "RGBG", "GRBG", etc.
-                    
-                    logger.info(f"Source pattern: {pat}")
-                    logger.info(f"Color description: {desc}")
-                    
-                    # Create a mapping from the color description to standard RGBG indices
-                    # Standard mapping: R=0, G=1, B=2, G2=1 (second green is also green)
-                    color_map = {}
-                    for i, color in enumerate(desc):
-                        if color == 'R':
-                            color_map[i] = 0  # R maps to 0
-                        elif color == 'G':
-                            color_map[i] = 1  # G maps to 1
-                        elif color == 'B':
-                            color_map[i] = 2  # B maps to 2
-                    
-                    # Define RGGB target pattern: 0=R, 1=G, 2=B
-                    target_pattern = np.array([[0, 1],
-                                            [1, 2]], dtype=np.uint8)
-                    
-                    # Get pattern height and width
-                    pat_h, pat_w = pat.shape
-                    
-                    # Create output array with same dimensions
-                    raw_img = np.zeros_like(data)
-                    
-                    # For each color in the RGGB target pattern
-                    for tgt_y in range(pat_h):
-                        for tgt_x in range(pat_w):
-                            # Get the target color (0=R, 1=G, 2=B)
-                            target_color = target_pattern[tgt_y, tgt_x]
-                            
-                            # Find where this color appears in the source pattern
-                            for src_y in range(pat_h):
-                                for src_x in range(pat_w):
-                                    src_idx = pat[src_y, src_x]
-                                    if color_map.get(src_idx) == target_color:
-                                        # Calculate the stride between the original pattern and the target pattern
-                                        y_stride = (pat_h + src_y - tgt_y) % pat_h
-                                        x_stride = (pat_w + src_x - tgt_x) % pat_w
-                                        
-                                        # Copy the pixels from source to target position
-                                        raw_img[tgt_y::pat_h, tgt_x::pat_w] = data[y_stride::pat_h, x_stride::pat_w]
-                    # raw_img = raw_img.astype(np.uint10)
-                    #raw_img = raw_img / 1024
-                    # raw_img = raw_img * 255
-                    raw_img = raw_img.astype(np.uint8)
-                    logger.info("Successfully converted the Bayer pattern")
-                    logger.info(np.max(raw_img))
+                # Read the .dng image directly from memory for speed
+                rawpy_obj = rawpy.imread(file_stream)
+
+                raw_img = rawpy_obj.raw_image
+                # Get raw data and metadata
+                pat = rawpy_obj.raw_pattern  # should be array([[3,2],[0,1]])
+                desc = rawpy_obj.color_desc.decode()  # expected to be 'RGBG' from the android camera
+                if desc != 'RGBG':
+                    logger.warning(f"Raw image Bayer format expected to be RGBG, received : {desc}")
+                
+                logger.info(f"Source pattern: {pat}")
+                logger.info(f"Color description: {desc}")
+                
+                
+                raw_img = raw_img.astype(np.uint8)
+                logger.info("Successfully converted the Bayer pattern")
+                logger.info(np.max(raw_img))
             
             else:
-                # For non-DNG files, read directly using OpenCV
+                bayer_format = 'RGBG'
+                # handle jpg, png and such images
                 upload_filename = f"{unique_id}_upload.png"
-                file_bytes = np.frombuffer(file.read(), np.uint8)
-                raw_img = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED).astype(np.float32)
-                cv2.imwrite(upload_filename, raw_img)
-                logger.info("Successfully saved 3D raw image to disk")
-                logger.info("Read non-DNG image directly from memory")
+                upload_filepath = os.path.join(app.config['UPLOAD_FOLDER'], upload_filename)
+                file_bytes = file.read()
+                raw_img = cv2.imdecode(
+                    np.frombuffer(file_bytes, dtype=np.uint8), # this np.uin8 isn't the image's depth
+                    cv2.IMREAD_UNCHANGED
+                ) # this is a RAW 2D image. note the in the original ZRR dataset, using cv2.imread_unchanged gives a 2D raw array
+
+                cv2.imwrite(upload_filepath, raw_img)
+                
+                logger.info("Successfully saved 2D raw image to disk in png format. use cv2.imread_unchanged to get back the 2D raw image")
             
-            logger.info(f"Image dimensions: {raw_img.shape}, ndim: {raw_img.ndim}")
+            logger.info(f"Done with the is_dng or other file format logic")
+            logger.info(f"Raw Image dimensions: {raw_img.shape}, ndim: {raw_img.ndim}")
             
             # Check if image values are in [0,1] range and normalize if needed
             max_val = np.max(raw_img)
+            logger.info(f"raw_img.dtype: {raw_img.dtype}")
             logger.info(f"Max value in image: {max_val}")
             if max_val <= 1.0:
                 logger.info("Image values in [0,1] range, scaling to [0,255]")
                 raw_img = raw_img * 255.0
-            
-            logger.info(f"Processed raw image {raw_img.shape}")
+                logger.info(f"New: np.max(raw_img): {np.max(raw_img)}")            
 
         except Exception as e:
             logger.error(f"Error processing image: {str(e)}")
@@ -360,7 +286,7 @@ def process_image():
 
         # Process the image
         try:
-            processed_img, raw_demosaiced = deep_learing_processing(raw_img)
+            processed_img, raw_demosaiced = deep_learing_processing(raw_img, bayer_format=bayer_format)
             logger.info(f"Processed image to shape {processed_img.shape}")
             logger.info(f"Demosaiced raw image to shape {raw_demosaiced.shape}")
         except Exception as e:
