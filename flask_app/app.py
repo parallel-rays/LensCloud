@@ -251,10 +251,10 @@ def process_image():
                 
                 raw_img = raw_img.astype(np.uint8)
                 logger.info("Successfully converted the Bayer pattern")
-                logger.info(np.max(raw_img))
+                logger.info(f'np.max(raw_img) in if_dng: {np.max(raw_img)}')
             
             else:
-                bayer_format = 'RGBG'
+                bayer_format = 'GBGR'
                 # handle jpg, png and such images
                 upload_filename = f"{unique_id}_upload.png"
                 upload_filepath = os.path.join(app.config['UPLOAD_FOLDER'], upload_filename)
@@ -286,6 +286,7 @@ def process_image():
 
         # Process the image
         try:
+            assert 0, 'Cannot pass through the model now'
             processed_img, raw_demosaiced = deep_learing_processing(raw_img, bayer_format=bayer_format)
             logger.info(f"Processed image to shape {processed_img.shape}")
             logger.info(f"Demosaiced raw image to shape {raw_demosaiced.shape}")
