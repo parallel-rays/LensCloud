@@ -51,8 +51,34 @@ model.to(device).eval()
 # some helper function for data preprocessing
 def remove_black_level(img, black_lv=63, white_lv=4*255):
     img = np.maximum(img.astype(np.float32)-black_lv, 0) / (white_lv-black_lv)
-    logger.info(f"np.max(img): {np.max(img)}")
+    logger.info(f"In def remove_black_level() np.max(img): {np.max(img)}")
     return img
+
+# def remove_black_level(img, black_lv=64, white_lv=1023):
+#     # img.black_level_per_channel   = [64, 64, 64, 63]
+#     # img.white_level               = 1023
+
+#     bl_map = np.zeros_like(img)
+#     bl_map[0::2, 0::2] = 64    # Gr
+#     bl_map[1::2, 0::2] = 64    # R
+#     bl_map[0::2, 1::2] = 64    # B
+#     bl_map[1::2, 1::2] = 63    # Gb
+#     img = img - bl_map
+
+#     img = np.maximum(img.astype(np.float32), 0) / (white_lv-black_lv)
+#     logger.info(f"In def remove_black_level()  np.max(img): {np.max(img)}")
+#     return img
+
+def white_balance(raw_norm, cam_wb):
+    # r_gain, g_gain, b_gain, _ = [1.6075353622436523, 1.0, 1.8028168678283691, 0.0]
+    r_gain, g_gain, b_gain, _ = cam_wb
+    logger.info(f"r_gain, g_gain, b_gain: {r_gain, g_gain, b_gain}")
+    raw_norm[0::2, 0::2] *= g_gain
+    raw_norm[0::2, 1::2] *= b_gain
+    raw_norm[1::2, 0::2] *= r_gain
+    raw_norm[1::2, 1::2] *= g_gain
+    
+    return raw_norm
 
 def extract_bayer_channels(raw, bayer_format='GBGR'):
     logger.info(f"bayer_format: {bayer_format}")
@@ -70,10 +96,19 @@ def extract_bayer_channels(raw, bayer_format='GBGR'):
         # G B
         # R G
 
-        ch_Gr = raw[0::2, 0::2]
+        # 2 3
+        # 0 1  # the order rawpy reads a bayer filter in
+
+        #ch_Gr = raw[0::2, 0::2]
+        #ch_B  = raw[0::2, 1::2]
+        #ch_R  = raw[1::2, 0::2]
+        #ch_Gb = raw[1::2, 1::2]
+        
+        ch_Gb = raw[0::2, 0::2]
         ch_B  = raw[0::2, 1::2]
         ch_R  = raw[1::2, 0::2]
-        ch_Gb = raw[1::2, 1::2]
+        ch_Gr = raw[1::2, 1::2]
+        
     else:
         logger.warning("Bayer format not one of 'GBGR' or 'RGBG'")
 
@@ -90,11 +125,12 @@ def get_coord(H, W, x=1, y=1):
     return np.stack((x_grid, y_grid), axis=0)
 
 # the core inference function
-def run_liteisp_on_raw(model, raw=None, device='cpu', bayer_format='GBGR'):
+def run_liteisp_on_raw(model, raw=None, device='cpu', bayer_format='GBGR', cam_wb=[1,1,1,1]):
     logger.info(f"Image being passed through the DL Model")
     if raw.ndim == 3:
         raw = raw[..., 0]
-    raw_norm = remove_black_level(raw)
+    raw_norm = remove_black_level(raw) # trying to normalise after white balance
+    # raw_norm = white_balance(raw_norm, cam_wb) # name kept as raw norm since it is used later
     # raw_norm = (raw/255).astype('float32')
     raw_combined = extract_bayer_channels(raw_norm, bayer_format)
     _, H, W = raw_combined.shape
@@ -106,7 +142,7 @@ def run_liteisp_on_raw(model, raw=None, device='cpu', bayer_format='GBGR'):
     return np.clip(out_np,0,1), raw_norm
 
 
-def deep_learing_processing(raw_img, device='cpu', bayer_format='GBGR', scale_down=False):
+def deep_learing_processing(raw_img, device='cpu', bayer_format='GBGR', scale_down=False, cam_wb=[1,1,1,1]):
     logger.info("In def deep_learing_processing()")
     logger.info(f"Preparing Processing of image with DL Model with dimensions: {raw_img.shape}",)
     # collapse or convert 3-channel duplicates
@@ -147,7 +183,7 @@ def deep_learing_processing(raw_img, device='cpu', bayer_format='GBGR', scale_do
     
     # run through the model
     logger.info("Passing the image through the deep learning model")
-    output_padded, raw_norm_padded = run_liteisp_on_raw(model, raw=raw_padded, device=device, bayer_format=bayer_format)
+    output_padded, raw_norm_padded = run_liteisp_on_raw(model, raw=raw_padded, device=device, bayer_format=bayer_format, cam_wb=cam_wb)
     
     # un-pad back to the padded (and possibly resized) size
     logger.info("Unpadding to padded/resized size")
@@ -237,7 +273,8 @@ def process_image():
 
                 # Read the .dng image directly from memory for speed
                 rawpy_obj = rawpy.imread(file_stream)
-
+                cam_wb = rawpy_obj.camera_whitebalance
+                logger.info(f"White balance of .dng image: {cam_wb}")
                 raw_img = rawpy_obj.raw_image
                 # Get raw data and metadata
                 pat = rawpy_obj.raw_pattern  # should be array([[3,2],[0,1]])
@@ -248,12 +285,14 @@ def process_image():
                 logger.info(f"Source pattern: {pat}")
                 logger.info(f"Color description: {desc}")
                 
-                
-                raw_img = raw_img.astype(np.uint8)
+                # raw_img = raw_img[1800:2248, 2000:2448]
+                # logger.info(f'Cropped the raw dng image to size: {raw_img.shape}')
+                # raw_img = raw_img.astype(np.uint8)
                 logger.info("Successfully converted the Bayer pattern")
                 logger.info(f'np.max(raw_img) in if_dng: {np.max(raw_img)}')
             
             else:
+                cam_wb = [1, 1, 1, 1]
                 bayer_format = 'GBGR'
                 # handle jpg, png and such images
                 upload_filename = f"{unique_id}_upload.png"
@@ -278,6 +317,7 @@ def process_image():
             if max_val <= 1.0:
                 logger.info("Image values in [0,1] range, scaling to [0,255]")
                 raw_img = raw_img * 255.0
+                # raw_img = raw_img.astype(np.uint8)
                 logger.info(f"New: np.max(raw_img): {np.max(raw_img)}")            
 
         except Exception as e:
@@ -286,8 +326,8 @@ def process_image():
 
         # Process the image
         try:
-            assert 0, 'Cannot pass through the model now'
-            processed_img, raw_demosaiced = deep_learing_processing(raw_img, bayer_format=bayer_format)
+            # assert 0, 'Cannot pass through the model now'
+            processed_img, raw_demosaiced = deep_learing_processing(raw_img, bayer_format=bayer_format, cam_wb=cam_wb)
             logger.info(f"Processed image to shape {processed_img.shape}")
             logger.info(f"Demosaiced raw image to shape {raw_demosaiced.shape}")
         except Exception as e:
